@@ -11,7 +11,8 @@ class HoldTapRepeat:
     NONE = const(0)
     TAP = const(1)
     HOLD = const(2)
-    ALL = const(3)
+    UNHOLD = const(4)
+    ALL = const(7)
 
 
 class HoldTapKeyState:
@@ -30,6 +31,7 @@ class HoldTapKeyState:
         self.active_kc = None
         self.active_mode = None
         self.may_repeat = False
+        self.another_key_pressed = False
 
 
 class HoldTapKeyMeta:
@@ -37,6 +39,7 @@ class HoldTapKeyMeta:
         self,
         tap,
         hold,
+        unhold=None,
         prefer_hold=True,
         tap_interrupted=False,
         tap_time=None,
@@ -44,6 +47,7 @@ class HoldTapKeyMeta:
     ):
         self.tap = tap
         self.hold = hold
+        self.unhold = unhold
         self.prefer_hold = prefer_hold
         self.tap_interrupted = tap_interrupted
         self.tap_time = tap_time
@@ -82,6 +86,11 @@ class HoldTap(Module):
         for key, state in self.key_states.items():
             if key == current_key:
                 continue
+
+            if is_pressed:
+                # some key was pressed while handling holdtap key
+                state.another_key_pressed = True
+
             if state.key_state != HoldTapKeyState.PRESSED:
                 continue
 
@@ -164,6 +173,13 @@ class HoldTap(Module):
         if state.key_state == HoldTapKeyState.HOLD_TIMEOUT:
             # release hold
             self.ht_deactivate(state, key, keyboard, *args, **kwargs)
+            # send unhold if any (and if no other key was pressed)
+            if not state.another_key_pressed and key.meta.unhold != None:
+                self.send_key_buffer(keyboard)
+                self.ht_activate_unhold(state, key, keyboard, *args, **kwargs)
+                self.send_key_buffer(keyboard)
+                self.ht_deactivate(state, key, keyboard, *args, **kwargs)
+                self.send_key_buffer(keyboard)
         elif state.key_state == HoldTapKeyState.INTERRUPTED:
             # release tap
             self.ht_deactivate(state, key, keyboard, *args, **kwargs)
@@ -245,6 +261,14 @@ class HoldTap(Module):
             self.ht_activate_hold(state, key, keyboard, *args, **kwargs)
         else:
             self.ht_activate_tap(state, key, keyboard, *args, **kwargs)
+
+    def ht_activate_unhold(self, state, key, keyboard, *args, **kwargs):
+        if debug.enabled:
+            debug('ht_activate_unhold')
+        state.active_kc = key.meta.unhold
+        state.active_mode = HoldTapRepeat.UNHOLD
+        state.may_repeat = key.meta.repeat & state.active_mode
+        keyboard.resume_process_key(self, state.active_kc, True)
 
     def ht_activate_repeat(self, state, key, keyboard, *args, **kwargs):
         if debug.enabled:
