@@ -1,4 +1,5 @@
 from micropython import const
+from supervisor import ticks_ms
 
 from kmk.keys import KC, make_argumented_key
 from kmk.modules import Module
@@ -31,6 +32,7 @@ class HoldTapKeyState:
         self.key_state = HoldTapKeyState.PRESSED
         self.active_kc = None
         self.active_mode = None
+        self.press_time = ticks_ms()
         self.may_repeat = False
         self.another_key_pressed = False
 
@@ -45,6 +47,7 @@ class HoldTapKeyMeta:
         dont_hold_until_interrupted=False,
         tap_interrupted=False,
         tap_time=None,
+        unhold_maxtime=None,
         repeat=HoldTapRepeat.NONE,
     ):
         self.tap = tap
@@ -54,11 +57,13 @@ class HoldTapKeyMeta:
         self.dont_hold_until_interrupted = dont_hold_until_interrupted
         self.tap_interrupted = tap_interrupted
         self.tap_time = tap_time
+        self.unhold_maxtime = unhold_maxtime
         self.repeat = repeat
 
 
 class HoldTap(Module):
     tap_time = 300
+    unhold_maxtime = None
 
     def __init__(self):
         self.key_buffer = []
@@ -185,11 +190,21 @@ class HoldTap(Module):
             self.ht_deactivate(state, key, keyboard, *args, **kwargs)
             # send unhold if any (and if no other key was pressed)
             if not state.another_key_pressed and key.meta.unhold != None:
-                self.send_key_buffer(keyboard)
-                self.ht_activate_unhold(state, key, keyboard, *args, **kwargs)
-                self.send_key_buffer(keyboard)
-                self.ht_deactivate(state, key, keyboard, *args, **kwargs)
-                self.send_key_buffer(keyboard)
+
+                time_holded = ticks_ms() - state.press_time
+                if key.meta.unhold_maxtime is not None:
+                    do_unhold = time_holded <= key.meta.unhold_maxtime
+                elif self.unhold_maxtime is not None:
+                    do_unhold = time_holded <= self.unhold_maxtime
+                else:
+                    do_unhold = True
+
+                if do_unhold:
+                    self.send_key_buffer(keyboard)
+                    self.ht_activate_unhold(state, key, keyboard, *args, **kwargs)
+                    self.send_key_buffer(keyboard)
+                    self.ht_deactivate(state, key, keyboard, *args, **kwargs)
+                    self.send_key_buffer(keyboard)
         elif state.key_state == HoldTapKeyState.INTERRUPTED:
             # release tap
             self.ht_deactivate(state, key, keyboard, *args, **kwargs)
